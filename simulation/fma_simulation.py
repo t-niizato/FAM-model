@@ -38,7 +38,7 @@ from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform
 from scipy.spatial import Delaunay
 
 import movement as f_cpu
-import hetero_function_safe as hetero
+import heterogeneity as hetero
 
 from tqdm import trange
 import warnings
