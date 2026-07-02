@@ -17,7 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
-import Baysian_power_law_test_with_cutoff as bplt
+import power_law_fitting as bplt
 
 EPS = 1e-12
 
