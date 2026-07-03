@@ -36,6 +36,7 @@ from numba import njit
 from numba import cuda
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float64
 from scipy.spatial import Delaunay
+from pathlib import Path
 
 import movement as f_cpu
 import heterogeneity as hetero
@@ -1042,6 +1043,77 @@ def interaction_cuda(
     state["meanU"] = bufs.d_meanU.copy_to_host()
 
 
+
+
+
+def _apply_boundary(state: dict) -> None:
+    """Apply the selected boundary condition after positions are updated.
+
+    Supported boundary modes for the public version:
+      - "open": historical behavior; no reflection after the initial wall-mask period.
+      - "reflective": reflect positions at x/y walls and mirror theta.
+
+    Periodic boundaries are intentionally not supported because the Delaunay
+    neighborhood construction used here is not periodic.
+    """
+    boundary = str(state.get("boundary", "open")).lower()
+    L = float(state["L"])
+
+    if boundary == "open":
+        return
+
+    if boundary == "reflective":
+        x = state["position"][0]
+        y = state["position"][1]
+        theta = state["theta"]
+
+        left = x < 0.0
+        right = x > L
+        if np.any(left):
+            x[left] = -x[left]
+            theta[left] = np.pi - theta[left]
+        if np.any(right):
+            x[right] = 2.0 * L - x[right]
+            theta[right] = np.pi - theta[right]
+
+        bottom = y < 0.0
+        top = y > L
+        if np.any(bottom):
+            y[bottom] = -y[bottom]
+            theta[bottom] = -theta[bottom]
+        if np.any(top):
+            y[top] = 2.0 * L - y[top]
+            theta[top] = -theta[top]
+
+        # The normal step size is small, but clipping prevents rare overshoots
+        # from leaving points outside the Delaunay domain.
+        state["position"][:, :] = np.clip(state["position"], 0.0, L)
+        state["theta"] = theta % (2.0 * np.pi)
+        return
+
+    raise ValueError(f"Unknown boundary condition: {boundary}. Use 'open' or 'reflective'.")
+
+
+def _update_valid_mask(state: dict) -> None:
+    """Update valid next-option mask according to boundary mode."""
+    boundary = str(state.get("boundary", "open")).lower()
+
+    if boundary == "reflective":
+        state["valid_mask"] = _compute_valid_mask(state["nx"], state["ny"], state["L"])
+        return
+
+    if boundary == "open":
+        # Historical behavior: walls affect only the initial transient.
+        # After boundary_steps, the swarm is allowed to move in open space.
+        bsteps = int(state.get("boundary_steps", 40))
+        if state["t"] < bsteps:
+            state["valid_mask"] = _compute_valid_mask(state["nx"], state["ny"], state["L"])
+        elif state["t"] == bsteps:
+            state["valid_mask"] = np.ones((state["N"], state["option_number"]), dtype=np.bool_)
+        return
+
+    raise ValueError(f"Unknown boundary condition: {boundary}. Use 'open' or 'reflective'.")
+
 # =========================
 # Public API（init/update）
 # =========================
@@ -1059,6 +1131,8 @@ def init_swarm_state(
     option_kappa: float = 2.0,
     # option_kappa: float = 1.75,
     seed: Optional[int] = None,
+    boundary: str = "open",
+    boundary_steps: int = 40,
 ) -> Tuple[dict, CUDABuffers]:
 
     if seed is not None:
@@ -1070,6 +1144,8 @@ def init_swarm_state(
     state["t"] = 0
     state["rep"] = float(R)
     state["division"] = int(division)
+    state["boundary"] = str(boundary).lower()
+    state["boundary_steps"] = int(boundary_steps)
 
     state["percept"] = hetero.vonmises_hetero_angles(division, kappa=kappa, mu=mu)
     state["option_kappa"] = float(option_kappa)
@@ -1091,7 +1167,7 @@ def init_swarm_state(
     indptr, indices = tri.vertex_neighbor_vertices
     state["tri"], state["indptr"], state["indices"] = tri, indptr, indices
 
-    state["valid_mask"] = _compute_valid_mask(state["nx"], state["ny"], state["L"])
+    _update_valid_mask(state)
     state["selected_option"] = np.zeros(state["N"], dtype=np.float64)
 
     bufs = init_cuda_buffers(state, seed=(seed or 0))
@@ -1126,6 +1202,7 @@ def update(
     speed = np.exp(-(sel ** 2) / (2 * 1.5 ** 2))
     state["position"][0, :] += V * speed * np.cos(th)
     state["position"][1, :] += V * speed * np.sin(th)
+    _apply_boundary(state)
     # state["position"][0, :] = state["position"][0, :] + V * np.cos(sel / 1.5) * np.cos(th)
     # state["position"][1, :] = state["position"][1, :] + V * np.cos(sel / 1.5) * np.sin(th)
     t3 = time.perf_counter()
@@ -1146,13 +1223,7 @@ def update(
     state["indptr"], state["indices"] = tri.vertex_neighbor_vertices
     t6 = time.perf_counter()
 
-    bsteps = state.get("boundary_steps", 40)
-
-    if state["t"] < bsteps:
-        state["valid_mask"] = _compute_valid_mask(state["nx"], state["ny"], state["L"])
-    else:
-        if state["t"] == bsteps:
-            state["valid_mask"] = np.ones((state["N"], state["option_number"]), dtype=np.bool_)
+    _update_valid_mask(state)
     t7 = time.perf_counter()
 
     state["t"] += 1
@@ -1428,76 +1499,81 @@ def animate_record(
 
 
 if __name__ == "__main__":
+    import argparse
     from numba import cuda
+
+    parser = argparse.ArgumentParser(
+        description="Run one public FMA-model simulation and save record/movie outputs."
+    )
+    parser.add_argument("--N", type=int, default=100)
+    parser.add_argument("--T", type=int, default=10000)
+    parser.add_argument("--L", type=float, default=150.0)
+    parser.add_argument("--V", type=float, default=6.0)
+    parser.add_argument("--R", type=float, default=1.0)
+    parser.add_argument("--option-number", type=int, default=60)
+    parser.add_argument("--division", type=int, default=40)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--boundary",
+        choices=["open", "reflective"],
+        default="open",
+        help="Boundary mode: 'open' uses the initial wall-mask period; 'reflective' keeps reflecting walls throughout.",
+    )
+    parser.add_argument(
+        "--boundary-steps",
+        type=int,
+        default=40,
+        help="Number of initial steps with wall-mask constraints when --boundary open.",
+    )
+    parser.add_argument("--record-every", type=int, default=1)
+    parser.add_argument("--sample-size", type=int, default=100)
+    parser.add_argument("--TH", type=int, default=30)
+    parser.add_argument("--out-dir", type=Path, default=Path("outputs"))
+    args = parser.parse_args()
+
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
     print("CUDA device count:", len(cuda.gpus))
     dev = cuda.get_current_device()
     print("Current device:", dev.id, dev.name.decode() if hasattr(dev.name, "decode") else dev.name)
+    print(f"Boundary condition: {args.boundary}")
 
-    # ==== settings ====
-    T = 100000
-    record_every = 1
-    Entropy = True   # ← statsも保存したいなら True、いらないなら False
+    state, bufs = init_swarm_state(
+        N=args.N,
+        L=args.L,
+        V=args.V,
+        R=args.R,
+        option_number=args.option_number,
+        division=args.division,
+        seed=args.seed,
+        boundary=args.boundary,
+        boundary_steps=args.boundary_steps,
+    )
 
-    # ==== init ====
-    state, bufs = init_swarm_state(N=200, L=150.0, V=6.0, R=1.0, option_number=60, division=40, seed=0)
+    pos_hist, theta_hist, prof = run_and_record_profile(
+        state,
+        bufs,
+        T=args.T,
+        record_every=args.record_every,
+        sample_size=args.sample_size,
+        TH=args.TH,
+        show_progress=True,
+        profile_every=200,
+        compute_stats=False,
+    )
 
-    # ==== run ====
-    if not Entropy:
-        pos_hist, theta_hist, prof = run_and_record_profile(
-            state, bufs,
-            T=T,
-            record_every=record_every,
-            sample_size=100,
-            TH=30,
-            show_progress=True,
-            profile_every=200,
-            compute_stats=False,
-        )
+    rec_path = args.out_dir / "rec.npz"
+    save_record_npz(
+        str(rec_path),
+        pos_hist,
+        theta_hist,
+        L=state["L"],
+        record_every=args.record_every,
+    )
+    print(f"[saved record] {rec_path}  pos={pos_hist.shape} theta={theta_hist.shape}")
 
-        rec_path = "rec.npz"
-        save_record_npz(rec_path, pos_hist, theta_hist, L=state["L"], record_every=record_every)
-        print(f"[saved record] {rec_path}  pos={pos_hist.shape} theta={theta_hist.shape}")
-
-    else:
-        pos_hist, theta_hist, prof, stats_hist = run_and_record_profile(state, bufs,
-            T=T,
-            record_every=record_every,
-            sample_size=100,
-            TH=30,
-            show_progress=True,
-            profile_every=200,
-            compute_stats=True,
-        )
-
-        H_sel_hist, U_sel_hist, meanH_hist, meanU_hist = stats_hist
-
-        rec_path = "rec_stats_300.npz"
-        save_record_npz(
-            rec_path,
-            pos_hist, theta_hist,
-            L=state["L"],
-            record_every=record_every,
-            H_sel_hist=H_sel_hist,
-            U_sel_hist=U_sel_hist,
-            meanH_hist=meanH_hist,
-            meanU_hist=meanU_hist,
-        )
-        print(f"[saved record] {rec_path}  pos={pos_hist.shape} theta={theta_hist.shape} "
-              f"H_sel={H_sel_hist.shape} U_sel={U_sel_hist.shape}")
-
-    # ==== profile print ====
-    print(f"[profile] total={prof['total_sec']:.3f} sec  mean_step={prof['step_sec_mean']*1000:.3f} ms/step  steps={prof['steps']}")
-
-    # ==== 3) move_function_safe.animate_swarm で動画保存 ====
-    # MP4保存には ffmpeg が必要です。
-    # out = "swarm.mp4"
-    # animate_record(
-    #     pos_hist, theta_hist, L=state["L"],
-    #     out_path=out,
-    #     fps=30,
-    #     camera="follow",
-    #     view_size=400.0,
-    #     bounds="none",
-    #     dpi=150,
-    # )
+    print(
+        f"[profile] total={prof['total_sec']:.3f} sec  "
+        f"mean_step={prof['step_sec_mean'] * 1000:.3f} ms/step  "
+        f"steps={prof['steps']}"
+    )
