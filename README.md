@@ -1,84 +1,104 @@
-# FMA-model
 
-Official implementation of the Future Mutual Anticipation (FMA) model.
+# Future Anticipation Maximization (FAM) Model
 
-## Repository structure
+Future Anticipation Maximization (FAM) is a decentralized mechanism for generating flexible collective behaviour through local interactions. Instead of explicitly representing future states or optimizing long-term trajectories, each individual locally maintains future behavioural possibilities by interacting with its neighbours. This simple principle produces spontaneous transitions between collective states while preserving both stability and adaptability.
+
+This repository contains the reference implementation of the FAM model, together with the analysis pipeline and figure-generation scripts used in our study. The repository enables reproduction of the main simulation results and provides a starting point for further investigations of self-organized collective behaviour, criticality, and biologically inspired swarm systems.
+
+
+## Repository Structure
 
 ```
-simulation/    Core simulation code
-analysis/      Criticality and Lévy analyses
-figures/       Figure generation scripts
-movies/        Example simulation movies
+.
+├── simulation/        # Swarm simulation
+├── analysis/          # Data analysis
+├── figures/           # Scripts for reproducing figures
+├── data/
+│   ├── processed/
+│   └── trajectories/
+├── movies/            # Example movies
+├── outputs/
+└── README.md
 ```
-## Requirements
+
+---
+
+## Installation
+
+Clone this repository
+
+```bash
+git clone https://github.com/USERNAME/FMA-model.git
+cd FMA-model
+```
+
+Create a virtual environment
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+Install the required packages
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## Main simulation
+---
+
+## Running a Simulation
+
+Generate one example simulation
 
 ```bash
 python simulation/fma_simulation.py
 ```
 
-## License
-
-MIT License# FMA-model
-
-Official implementation of the **Future Mode Anticipation (FMA)** model.
-
-## Repository structure
-
-```text
-simulation/    Core simulation code
-analysis/      Criticality and Lévy analyses
-figures/       Figure generation scripts
-movies/        Example simulation movies
-```
-
-## Requirements
+Generate the animation
 
 ```bash
-pip install -r requirements.txt
+python simulation/animation.py
 ```
 
-## Running the simulation
+---
 
-Run the simulation:
+## Reproducing the Main Figures
+
+The main figures can be reproduced using
 
 ```bash
-python simulation/fma_simulation.py
+python figures/Figure_1.py
+python figures/Figure_2B.py
+python figures/Figure_2C.py
+python figures/Figure_3.py
+python figures/Figure_4A.py
+python figures/Figure_4B.py
+python figures/Figure_5.py
+python figures/Figure_6A.py
+python figures/Figure_6B.py
+python figures/Figure_7.py
+python figures/Figure_8.py
 ```
 
-The simulation output is saved as:
+---
 
-```text
-outputs/rec.npz
-```
+## Data
 
-## Creating an animation
+Representative datasets required to reproduce the main figures are included in this repository.
 
-Generate an animation from the simulation output:
+Large-scale simulation datasets used for parameter sweeps are not included.
 
-```bash
-python simulation/animation.py --input outputs/rec.npz --output outputs/animation.mp4
-```
+---
 
-The resulting animation is saved as:
+## Citation
 
-```text
-outputs/animation.mp4
-```
+If you use this code in your research, please cite the corresponding publication.
 
-## Figures
+*Citation information will be added after publication.*
 
-Scripts for reproducing representative figures are provided in the `figures/` directory.
-
-## Analysis
-
-Scripts for criticality and Lévy analyses are provided in the `analysis/` directory.
+---
 
 ## License
 
-MIT License.
+MIT License
