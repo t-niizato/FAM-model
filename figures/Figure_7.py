@@ -2,16 +2,16 @@
 # -*- coding: utf-8 -*-
 
 """
-Figure_5.py
+Figure_7.py
 
-Generate Figure 5 from precomputed criticality summary data.
+Generate Figure 7: COM alpha vs N for three conditions.
 
 Input:
-    data/processed/figure4/*_criticality_summary.csv
+    data/processed/figure7/*_com_all_runs_metrics.csv
 
 Output:
-    figures/output/Figure_5.pdf
-    figures/output/Figure_5.png
+    figures/output/Figure_7.pdf
+    figures/output/Figure_7.png
 """
 
 from pathlib import Path
@@ -34,26 +34,26 @@ except Exception:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = ROOT / "data" / "processed" / "figure5"
+DATA_DIR = ROOT / "data" / "processed" / "figure7"
 OUT_DIR = ROOT / "figures" / "output"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
 CONDITIONS = [
     (
-        "kappa_0p5__okappa_1p5_criticality_summary.csv",
-        r"$\kappa_{\mathrm{per}}=0.5,\ \kappa_{\mathrm{op}}=1.5$",
+        "kappa_0p5__okappa_1p5_com_all_runs_metrics.csv",
+        r"$\kappa_{\rm per}=0.5,\ \kappa_{\rm op}=1.5$",
         "#34495E",
     ),
     (
-        "kappa_1p5__okappa_2_criticality_summary.csv",
-        r"$\kappa_{\mathrm{per}}=1.5,\ \kappa_{\mathrm{op}}=2.0$",
-        "#D95F5F",
+        "kappa_1p5__okappa_2_com_all_runs_metrics.csv",
+        r"$\kappa_{\rm per}=1.5,\ \kappa_{\rm op}=2.0$",
+        "#C06C3E",
     ),
     (
-        "kappa_2p5__okappa_3_criticality_summary.csv",
-        r"$\kappa_{\mathrm{per}}=2.5,\ \kappa_{\mathrm{op}}=3.0$",
-        "#2E8B57",
+        "kappa_2p5__okappa_3_com_all_runs_metrics.csv",
+        r"$\kappa_{\rm per}=2.5,\ \kappa_{\rm op}=3.0$",
+        "#5B8A72",
     ),
 ]
 
@@ -85,51 +85,37 @@ def despine(ax):
         ax.spines["right"].set_visible(False)
 
 
-def summarize_alpha_hi(
-    csv_path: Path,
-    min_hi_fit: int = 4,
-    min_flip_pos: int = 4,
-) -> pd.DataFrame:
+def summarize_com_alpha(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
         raise FileNotFoundError(f"Missing input file: {csv_path}")
 
     df = pd.read_csv(csv_path)
 
-    required = {
-        "status",
-        "n_hi_fit",
-        "n_flip_pos",
-        "N",
-        "alpha_hi",
-    }
-
+    required = {"N", "truncated_alpha"}
     missing = required - set(df.columns)
+
     if missing:
         raise ValueError(f"Missing required columns in {csv_path}: {sorted(missing)}")
 
-    ok = df[
-        (df["status"] == "ok")
-        & (pd.to_numeric(df["n_hi_fit"], errors="coerce") >= min_hi_fit)
-        & (pd.to_numeric(df["n_flip_pos"], errors="coerce") >= min_flip_pos)
-    ].copy()
+    df["N"] = pd.to_numeric(df["N"], errors="coerce")
+    df["truncated_alpha"] = pd.to_numeric(df["truncated_alpha"], errors="coerce")
 
-    ok["N"] = pd.to_numeric(ok["N"], errors="coerce")
-    ok["alpha_hi"] = pd.to_numeric(ok["alpha_hi"], errors="coerce")
+    df = df[np.isfinite(df["N"]) & np.isfinite(df["truncated_alpha"])]
 
-    ok = ok[np.isfinite(ok["N"]) & np.isfinite(ok["alpha_hi"])]
-
-    if ok.empty:
+    if df.empty:
         return pd.DataFrame(columns=["N", "mean", "std", "count"])
 
     return (
-        ok.groupby("N")["alpha_hi"]
+        df.groupby("N")["truncated_alpha"]
         .agg(["mean", "std", "count"])
         .reset_index()
         .sort_values("N")
     )
 
 
-def plot_figure(out_pdf: Path, out_png: Path):
+def main():
+    set_paper_style()
+
     fig, axes = plt.subplots(
         1,
         3,
@@ -140,11 +126,10 @@ def plot_figure(out_pdf: Path, out_png: Path):
     )
 
     for i, (ax, (filename, title, color)) in enumerate(zip(axes, CONDITIONS)):
-        csv_path = DATA_DIR / filename
-        tmp = summarize_alpha_hi(csv_path)
+        tmp = summarize_com_alpha(DATA_DIR / filename)
 
         if tmp.empty:
-            raise RuntimeError(f"No valid alpha_hi data after filtering: {csv_path}")
+            raise RuntimeError(f"No valid data after filtering: {DATA_DIR / filename}")
 
         ax.errorbar(
             tmp["N"],
@@ -153,7 +138,7 @@ def plot_figure(out_pdf: Path, out_png: Path):
             fmt="o-",
             color=color,
             ecolor=color,
-            linewidth=1.0,
+            linewidth=1.05,
             elinewidth=0.8,
             capsize=2.2,
             capthick=0.8,
@@ -176,21 +161,14 @@ def plot_figure(out_pdf: Path, out_png: Path):
 
         despine(ax)
 
-    axes[0].set_ylabel(r"$\alpha_{\mathrm{hi}}$")
+    axes[0].set_ylabel(r"COM $\alpha$")
+
+    out_pdf = OUT_DIR / "Figure_7.pdf"
+    out_png = OUT_DIR / "Figure_7.png"
 
     fig.savefig(out_pdf, bbox_inches="tight")
     fig.savefig(out_png, dpi=600, bbox_inches="tight")
-
     plt.close(fig)
-
-
-def main():
-    set_paper_style()
-
-    out_pdf = OUT_DIR / "Figure_5.pdf"
-    out_png = OUT_DIR / "Figure_5.png"
-
-    plot_figure(out_pdf, out_png)
 
     print(f"Saved: {out_pdf}")
     print(f"Saved: {out_png}")

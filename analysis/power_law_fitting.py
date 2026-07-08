@@ -949,7 +949,7 @@ def main():
         help="path to levy_analysis_by_param",
     )
     parser.add_argument(
-        "--output-root",
+        "--outputs-root",
         required=True,
         help="directory where plots will be saved",
     )

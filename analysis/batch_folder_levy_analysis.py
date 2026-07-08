@@ -1110,7 +1110,7 @@ def save_individual_summary_outputs(df, out_dir: Path):
 
 def save_group_readme(out_dir: Path):
     with open(out_dir / "README_outputs.txt", "w", encoding="utf-8") as f:
-        f.write("levy_analysis_by_param output structure\n")
+        f.write("levy_analysis_by_param outputs structure\n")
         f.write("=====================================\n\n")
         f.write("levy_all_metrics.csv\n")
         f.write("  all rows together (individual + com)\n\n")
@@ -1307,9 +1307,9 @@ def main():
     ap = argparse.ArgumentParser(description="Parameter-grouped Lévy analysis for swarm position npz files")
 
     ap.add_argument("--root", type=str, required=True,
-                    help="root directory of batch_record_positions output")
+                    help="root directory of batch_record_positions outputs")
     ap.add_argument("--out", type=str, default=None,
-                    help="output analysis directory (default: <root>/levy_analysis_by_param)")
+                    help="outputs analysis directory (default: <root>/levy_analysis_by_param)")
     ap.add_argument("--key", type=str, default="pos")
     ap.add_argument("--max-files", type=int, default=None,
                     help="debug: analyze only first N files globally")

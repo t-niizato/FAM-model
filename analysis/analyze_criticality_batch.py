@@ -904,9 +904,9 @@ def main():
     ap = argparse.ArgumentParser()
 
     ap.add_argument("--root", type=str, required=True,
-                    help="root directory of batch_record_positions output")
+                    help="root directory of batch_record_positions outputs")
     ap.add_argument("--out", type=str, default=None,
-                    help="output analysis directory (default: <root>/criticality_analysis_by_param)")
+                    help="outputs analysis directory (default: <root>/criticality_analysis_by_param)")
     ap.add_argument("--dt", type=float, default=1.0)
     ap.add_argument("--W", type=int, default=2000)
     ap.add_argument("--step", type=int, default=660)
