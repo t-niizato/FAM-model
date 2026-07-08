@@ -11,20 +11,19 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MultipleLocator, AutoMinorLocator
 import seaborn as sns
-from matplotlib.ticker import MultipleLocator, AutoMinorLocator, MaxNLocator
 
 EPS = 1e-12
 
 CONDITIONS = [
     ("kappa_0p5__okappa_1p5", "#34495E"),
-    ("kappa_1p5__okappa_2",   "#C06C3E"),
-    ("kappa_2p5__okappa_3",   "#5B8A72"),
+    ("kappa_1p5__okappa_2", "#C06C3E"),
+    ("kappa_2p5__okappa_3", "#5B8A72"),
 ]
 
 KINDS = [
-    ("schooling_tot", "schooling total", "-"),
-    ("milling_rad",  "milling radial",  "--"),
-    ("milling_tan",  "milling tangential", ":"),
+    ("schooling_tot", "schooling", "-"),
+    ("milling_tan", "tangential", "--"),
+    ("milling_rad", "radial", ":"),
 ]
 
 
@@ -61,25 +60,6 @@ def empirical_ccdf(x):
     y = 1.0 - np.arange(1, x.size + 1) / x.size
     y = np.maximum(y, 1.0 / x.size)
     return x, y
-
-
-def fmt_float_for_dir(x: float, nd: int = 6) -> str:
-    s = f"{float(x):.{nd}f}".rstrip("0").rstrip(".")
-    return s.replace("-", "m").replace(".", "p")
-
-
-def resolve_npz_path(row, position_root: Path) -> Path:
-    p = Path(str(row["path"])).expanduser()
-    if p.exists():
-        return p.resolve()
-
-    return (
-        position_root
-        / f"N{int(row['N'])}"
-        / f"kappa_{fmt_float_for_dir(float(row['percept_kappa']))}"
-        / f"okappa_{fmt_float_for_dir(float(row['option_kappa']))}"
-        / f"pos_rep{int(row['rep']):02d}_seed{int(row['seed'])}.npz"
-    )
 
 
 def load_positions_npz(path, key="pos"):
@@ -160,52 +140,6 @@ def flight_events_with_mask(series, threshold, mask):
     return np.asarray(flights, float)
 
 
-def reconstruct_individual_flights(row, position_root: Path, key="pos",
-                                   milling_q=0.80, schooling_q=0.80):
-    npz_path = resolve_npz_path(row, position_root)
-    X = load_positions_npz(npz_path, key=key)
-
-    cx, cy = center_of_mass_trajectory(X)
-    rx, ry = relative_positions(X, cx, cy)
-    abs_v_rad, abs_v_tan, abs_v, Lz = decompose_rad_tan(rx, ry)
-    P = polarization_series(X)
-
-    milling_thr = make_threshold(np.abs(Lz), q=milling_q)
-    schooling_thr = make_threshold(P, q=schooling_q)
-
-    milling_mask = np.abs(Lz) >= milling_thr
-    schooling_mask = P >= schooling_thr
-
-    ind = int(row["individual"])
-    kind = row["kind"]
-    thr = float(row["threshold"])
-
-    if kind == "milling_rad":
-        return flight_events_with_mask(abs_v_rad[:, ind], thr, milling_mask)
-    if kind == "milling_tan":
-        return flight_events_with_mask(abs_v_tan[:, ind], thr, milling_mask)
-    if kind == "schooling_tot":
-        return flight_events_with_mask(abs_v[:, ind], thr, schooling_mask)
-
-    raise ValueError(f"unknown kind: {kind}")
-
-
-def params_from_row(row, prefix):
-    def get(name):
-        try:
-            return float(row.get(f"{prefix}_{name}", np.nan))
-        except Exception:
-            return np.nan
-
-    return {
-        "xmin": get("xmin"),
-        "alpha": get("alpha"),
-        "aic": get("aic"),
-        "p_value": get("p_value"),
-        "ks_D": get("ks_D"),
-    }
-
-
 def ccdf_truncated_powerlaw(grid, xmin, xmax, alpha):
     if not (np.isfinite(xmin) and np.isfinite(xmax) and np.isfinite(alpha)):
         return None
@@ -215,134 +149,72 @@ def ccdf_truncated_powerlaw(grid, xmin, xmax, alpha):
     grid = np.asarray(grid, float)
     out = np.zeros_like(grid)
 
-    m1 = grid < xmin
-    m2 = (grid >= xmin) & (grid <= xmax)
-    m3 = grid > xmax
+    out[grid < xmin] = 1.0
+    out[grid > xmax] = 0.0
 
-    out[m1] = 1.0
-    out[m3] = 0.0
-
+    m = (grid >= xmin) & (grid <= xmax)
     a1 = 1.0 - alpha
+
     if abs(a1) > 1e-12:
-        out[m2] = (xmax ** a1 - grid[m2] ** a1) / (xmax ** a1 - xmin ** a1)
+        out[m] = (xmax ** a1 - grid[m] ** a1) / (xmax ** a1 - xmin ** a1)
     else:
-        out[m2] = np.log(xmax / grid[m2]) / np.log(xmax / xmin)
+        out[m] = np.log(xmax / grid[m]) / np.log(xmax / xmin)
 
     return out
 
 
-def plot_individual_alpha_by_condition(analysis_root: Path, out_dir: Path):
-    setup_style()
-
-    for folder, color in CONDITIONS:
-        csv_path = analysis_root / folder / "levy_individual_metrics.csv"
-        df = pd.read_csv(csv_path)
-
-        fig, ax = plt.subplots(figsize=(3.35, 2.55), constrained_layout=True)
-
-        for kind, label, ls in KINDS:
-            sub = df[df["kind"] == kind].copy()
-            sub["N"] = pd.to_numeric(sub["N"], errors="coerce")
-            sub["truncated_alpha"] = pd.to_numeric(sub["truncated_alpha"], errors="coerce")
-            sub = sub[np.isfinite(sub["N"]) & np.isfinite(sub["truncated_alpha"])]
-
-            tmp = (
-                sub.groupby("N")["truncated_alpha"]
-                .agg(["mean", "std", "count"])
-                .reset_index()
-                .sort_values("N")
-            )
-
-            ax.errorbar(
-                tmp["N"], tmp["mean"], yerr=tmp["std"],
-                fmt="o",
-                linestyle=ls,
-                color=color,
-                ecolor=color,
-                linewidth=1.0,
-                elinewidth=0.75,
-                capsize=2.0,
-                capthick=0.75,
-                markersize=3.0,
-                markeredgewidth=0.0,
-                label=label,
-            )
-
-        ax.set_xlabel(r"$N$")
-        ax.set_ylabel(r"individual $\alpha$")
-        ax.xaxis.set_major_locator(MultipleLocator(100))
-        ax.xaxis.set_minor_locator(MultipleLocator(50))
-        ax.yaxis.set_minor_locator(AutoMinorLocator(2))
-
-        ax.grid(which="major", color="0.88", linewidth=0.35)
-        ax.grid(which="minor", color="0.94", linewidth=0.22)
-
-        ax.tick_params(which="major", length=3.0, width=0.75, pad=2)
-        ax.tick_params(which="minor", length=1.7, width=0.5)
-
-        ax.legend(frameon=False, fontsize=6, loc="best", handlelength=2.0)
-
-        for sp in ax.spines.values():
-            sp.set_visible(True)
-            sp.set_linewidth(0.75)
-            sp.set_color("0.15")
-
-        out_pdf = out_dir / f"paper_individual_alpha_summary_{folder}.pdf"
-        out_png = out_dir / f"paper_individual_alpha_summary_{folder}.png"
-        fig.savefig(out_pdf, bbox_inches="tight")
-        fig.savefig(out_png, dpi=600, bbox_inches="tight")
-        plt.close(fig)
-
-        print(f"saved: {out_pdf}")
-        print(f"saved: {out_png}")
-
-def ccdf_shifted_exp(grid, xmin, lam):
-    grid = np.asarray(grid, float)
-
-    if not (np.isfinite(xmin) and np.isfinite(lam)):
-        return None
-    if xmin <= 0 or lam <= 0:
-        return None
-
-    out = np.ones_like(grid)
-    m = grid >= xmin
-    out[m] = np.exp(-lam * (grid[m] - xmin))
-    return out
-
-def choose_sample_individual(df, N=300):
-    sub = df[
-        (df["N"].astype(int) == int(N)) &
-        (df["kind"] == "schooling_tot")
-    ].copy()
-
-    sub["flight_count_num"] = pd.to_numeric(sub["flight_count"], errors="coerce")
-    sub["delta_num"] = pd.to_numeric(sub["delta_aic_trunc_minus_exp"], errors="coerce")
-    sub = sub[np.isfinite(sub["flight_count_num"])].copy()
-
-    row = sub.sort_values(
-        ["flight_count_num", "delta_num"],
-        ascending=[False, True],
-    ).iloc[0]
-
-    path = row["path"]
-    individual = int(row["individual"])
-
-    return path, individual
-
-
-def plot_individual_fit_sample(
-    analysis_root: Path,
-    position_root: Path,
-    out_dir: Path,
-    folder="kappa_2p5__okappa_3",
-    N=300,
+def reconstruct_individual_flights_from_npz(
+    npz_path,
+    individual,
+    kind,
+    threshold,
+    milling_q=0.80,
+    schooling_q=0.80,
 ):
+    X = load_positions_npz(npz_path)
+
+    cx, cy = center_of_mass_trajectory(X)
+    rx, ry = relative_positions(X, cx, cy)
+
+    abs_v_rad, abs_v_tan, abs_v, Lz = decompose_rad_tan(rx, ry)
+    P = polarization_series(X)
+
+    milling_thr = make_threshold(np.abs(Lz), q=milling_q)
+    schooling_thr = make_threshold(P, q=schooling_q)
+
+    milling_mask = np.abs(Lz) >= milling_thr
+    schooling_mask = P >= schooling_thr
+
+    if kind == "milling_rad":
+        return flight_events_with_mask(abs_v_rad[:, individual], threshold, milling_mask)
+    if kind == "milling_tan":
+        return flight_events_with_mask(abs_v_tan[:, individual], threshold, milling_mask)
+    if kind == "schooling_tot":
+        return flight_events_with_mask(abs_v[:, individual], threshold, schooling_mask)
+
+    raise ValueError(f"unknown kind: {kind}")
+
+
+def plot_figure8B_sample_fit(data_root: Path, out_dir: Path):
     setup_style()
 
-    csv_path = analysis_root / folder / "levy_individual_metrics.csv"
+    folder = "kappa_2p5__okappa_3"
+    individual = 241
+
+    npz_path = data_root / "figure8_sample_N300_kappa2p5_okappa3_rep00_seed30000000.npz"
+    csv_path = data_root / folder / "levy_individual_metrics.csv"
+
     df = pd.read_csv(csv_path)
 
-    path, individual = choose_sample_individual(df, N=N)
+    sample_rows = df[
+        (df["N"].astype(int) == 300)
+        & (df["rep"].astype(int) == 0)
+        & (df["seed"].astype(int) == 30000000)
+        & (df["individual"].astype(int) == individual)
+    ].copy()
+
+    if sample_rows.empty:
+        raise ValueError("Representative individual was not found in levy_individual_metrics.csv")
 
     fig, ax = plt.subplots(figsize=(4.25, 2.75), constrained_layout=True)
 
@@ -350,12 +222,6 @@ def plot_individual_fit_sample(
         "schooling_tot": "#34495E",
         "milling_tan": "#5B8A72",
         "milling_rad": "#C06C3E",
-    }
-
-    labels = {
-        "schooling_tot": "schooling",
-        "milling_tan": "tangential",
-        "milling_rad": "radial",
     }
 
     markers = {
@@ -370,22 +236,30 @@ def plot_individual_fit_sample(
         "milling_rad": ":",
     }
 
-    legend_handles = []
-    legend_labels = []
+    labels = {
+        "schooling_tot": "schooling",
+        "milling_tan": "tangential",
+        "milling_rad": "radial",
+    }
+
+    handles = []
+    handle_labels = []
     stats_lines = []
 
     for kind, _, _ in KINDS:
-        row = df[
-            (df["path"].astype(str) == str(path)) &
-            (df["individual"].astype(int) == individual) &
-            (df["kind"] == kind)
-        ]
-
-        if row.empty:
+        row_df = sample_rows[sample_rows["kind"] == kind]
+        if row_df.empty:
             continue
 
-        row = row.iloc[0]
-        flights = reconstruct_individual_flights(row, position_root)
+        row = row_df.iloc[0]
+
+        threshold = float(row["threshold"])
+        flights = reconstruct_individual_flights_from_npz(
+            npz_path=npz_path,
+            individual=individual,
+            kind=kind,
+            threshold=threshold,
+        )
 
         x, y = empirical_ccdf(flights)
         if x is None:
@@ -393,10 +267,9 @@ def plot_individual_fit_sample(
 
         color = colors[kind]
         marker = markers[kind]
-        label = labels[kind]
         ls = linestyles[kind]
+        label = labels[kind]
 
-        # empirical CCDF
         ax.loglog(
             x,
             y,
@@ -408,55 +281,30 @@ def plot_individual_fit_sample(
             markeredgewidth=0.0,
         )
 
-        # truncated power-law fit
-        pars = params_from_row(row, "truncated")
-        xmin = pars["xmin"]
-        alpha = pars["alpha"]
+        xmin = float(row["truncated_xmin"])
+        alpha = float(row["truncated_alpha"])
 
-        if np.isfinite(xmin) and np.isfinite(alpha):
-            tail = finite_positive(flights)
-            tail = tail[tail >= xmin]
+        tail = finite_positive(flights)
+        tail = tail[tail >= xmin]
 
-            if tail.size > 0:
-                idx0 = np.searchsorted(x, xmin, side="left")
-                S0 = float(y[idx0] if idx0 < len(y) else y[-1])
+        if tail.size > 0 and np.isfinite(xmin) and np.isfinite(alpha):
+            idx0 = np.searchsorted(x, xmin, side="left")
+            S0 = float(y[idx0] if idx0 < len(y) else y[-1])
 
-                xmax = float(tail.max())
-                if xmax > xmin:
-                    xx = np.logspace(np.log10(xmin), np.log10(xmax * 0.98), 250)
-                    yy = ccdf_truncated_powerlaw(xx, xmin, xmax, alpha)
+            xmax = float(tail.max())
+            if xmax > xmin:
+                xx = np.logspace(np.log10(xmin), np.log10(xmax * 0.98), 250)
+                yy = ccdf_truncated_powerlaw(xx, xmin, xmax, alpha)
 
-                    if yy is not None:
-                        ax.loglog(
-                            xx,
-                            S0 * yy,
-                            linestyle=ls,
-                            color=color,
-                            lw=1.25,
-                        )
+                if yy is not None:
+                    ax.loglog(xx, S0 * yy, linestyle=ls, color=color, lw=1.25)
 
-        # outside statistics text
-        try:
-            delta_aic = float(row["delta_aic_trunc_minus_exp"])
-        except Exception:
-            delta_aic = np.nan
+        delta_aic = float(row["delta_aic_trunc_minus_exp"])
+        stats_lines.append(rf"{label}: $\alpha={alpha:.2f}$, $\Delta$AIC={delta_aic:.1f}")
 
-        stats_lines.append(
-            rf"{label}: $\alpha={alpha:.2f}$, $\Delta$AIC={delta_aic:.1f}"
-        )
-
-        # legend only indicates series identity
-        h = ax.scatter(
-            [],
-            [],
-            s=18,
-            marker=marker,
-            color=color,
-            edgecolor="none",
-            alpha=0.85,
-        )
-        legend_handles.append(h)
-        legend_labels.append(label)
+        h = ax.scatter([], [], s=18, marker=marker, color=color, edgecolor="none", alpha=0.85)
+        handles.append(h)
+        handle_labels.append(label)
 
     ax.set_xlabel("flight length")
     ax.set_ylabel(r"$P(X \geq x)$")
@@ -465,12 +313,9 @@ def plot_individual_fit_sample(
     ax.grid(which="major", color="0.88", linewidth=0.35)
     ax.grid(which="minor", color="0.94", linewidth=0.22)
 
-    ax.tick_params(which="major", length=3.0, width=0.75, pad=2)
-    ax.tick_params(which="minor", length=1.7, width=0.5)
-
     ax.legend(
-        legend_handles,
-        legend_labels,
+        handles,
+        handle_labels,
         frameon=False,
         fontsize=6,
         loc="upper right",
@@ -479,7 +324,6 @@ def plot_individual_fit_sample(
         borderpad=0.2,
     )
 
-    # α and ΔAIC outside the plot frame
     ax.text(
         1.03,
         0.02,
@@ -496,8 +340,8 @@ def plot_individual_fit_sample(
         sp.set_linewidth(0.75)
         sp.set_color("0.15")
 
-    out_pdf = out_dir / f"paper_individual_fit_sample_{folder}_N{N}_ind{individual:03d}.pdf"
-    out_png = out_dir / f"paper_individual_fit_sample_{folder}_N{N}_ind{individual:03d}.png"
+    out_pdf = out_dir / "Figure_8B.pdf"
+    out_png = out_dir / "Figure_8B.png"
 
     fig.savefig(out_pdf, bbox_inches="tight")
     fig.savefig(out_png, dpi=600, bbox_inches="tight")
@@ -506,7 +350,8 @@ def plot_individual_fit_sample(
     print(f"saved: {out_pdf}")
     print(f"saved: {out_png}")
 
-def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
+
+def plot_figure8C_alpha_violin(data_root: Path, out_dir: Path):
     setup_style()
 
     regime_labels = {
@@ -524,9 +369,9 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
     kind_order = ["schooling_tot", "milling_tan", "milling_rad"]
 
     kind_markers = {
-        "schooling_tot": "o",  # circle
-        "milling_tan": "^",    # triangle
-        "milling_rad": "s",    # square
+        "schooling_tot": "o",
+        "milling_tan": "^",
+        "milling_rad": "s",
     }
 
     regime_kind_colors = {
@@ -547,7 +392,6 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
         },
     }
 
-    # vertical layout: regimes on y-axis, alpha on x-axis
     base_positions = np.arange(len(CONDITIONS), dtype=float)[::-1]
 
     kind_offsets = {
@@ -557,11 +401,10 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
     }
 
     fig, ax = plt.subplots(figsize=(3.45, 2.75), constrained_layout=True)
-
     rng = np.random.default_rng(123)
 
     for r, (folder, _) in enumerate(CONDITIONS):
-        csv_path = analysis_root / folder / "levy_individual_metrics.csv"
+        csv_path = data_root / folder / "levy_individual_metrics.csv"
         df = pd.read_csv(csv_path)
 
         base = base_positions[r]
@@ -569,7 +412,7 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
         for kind in kind_order:
             vals = pd.to_numeric(
                 df.loc[df["kind"] == kind, "truncated_alpha"],
-                errors="coerce"
+                errors="coerce",
             ).to_numpy(float)
 
             vals = vals[np.isfinite(vals)]
@@ -584,7 +427,7 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
             vp = ax.violinplot(
                 vals,
                 positions=[pos],
-                vert=False,
+                orientation="horizontal",
                 widths=0.26,
                 showmeans=False,
                 showmedians=False,
@@ -621,13 +464,7 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
                 zorder=4,
             )
 
-    ax.axvline(
-        3.0,
-        color="0.30",
-        linestyle="--",
-        linewidth=0.75,
-        zorder=0,
-    )
+    ax.axvline(3.0, color="0.30", linestyle="--", linewidth=0.75, zorder=0)
 
     ax.text(
         3.03,
@@ -650,284 +487,6 @@ def plot_individual_alpha_violin_regimes(analysis_root: Path, out_dir: Path):
     ax.grid(which="major", axis="x", color="0.88", linewidth=0.35)
     ax.grid(which="minor", axis="x", color="0.94", linewidth=0.22)
 
-    ax.tick_params(which="major", length=3.0, width=0.75, pad=2)
-    ax.tick_params(which="minor", length=1.7, width=0.5)
-
-    handles = []
-    labels = []
-    for kind in kind_order:
-        h = ax.scatter(
-            [],
-            [],
-            s=18,
-            marker=kind_markers[kind],
-            facecolor="0.25",
-            edgecolor="none",
-            alpha=0.85,
-        )
-        handles.append(h)
-        labels.append(kind_labels[kind])
-
-    ax.legend(
-        handles,
-        labels,
-        frameon=False,
-        fontsize=6,
-        loc="lower right",
-        handletextpad=0.4,
-        borderpad=0.2,
-    )
-
-    for sp in ax.spines.values():
-        sp.set_visible(True)
-        sp.set_linewidth(0.75)
-        sp.set_color("0.15")
-
-    out_pdf = out_dir / "paper_individual_alpha_violin_regimes.pdf"
-    out_png = out_dir / "paper_individual_alpha_violin_regimes.png"
-
-    fig.savefig(out_pdf, bbox_inches="tight")
-    fig.savefig(out_png, dpi=600, bbox_inches="tight")
-    plt.close(fig)
-
-    print(f"saved: {out_pdf}")
-    print(f"saved: {out_png}")
-
-def plot_individual_delta_aic_by_condition(analysis_root: Path, out_dir: Path):
-    setup_style()
-
-    for folder, color in CONDITIONS:
-        csv_path = analysis_root / folder / "levy_individual_metrics.csv"
-        df = pd.read_csv(csv_path)
-
-        fig, ax = plt.subplots(figsize=(3.35, 2.55), constrained_layout=True)
-
-        for kind, label, ls in KINDS:
-            sub = df[df["kind"] == kind].copy()
-            sub["N"] = pd.to_numeric(sub["N"], errors="coerce")
-            sub["delta_aic_trunc_minus_exp"] = pd.to_numeric(
-                sub["delta_aic_trunc_minus_exp"], errors="coerce"
-            )
-
-            sub = sub[
-                np.isfinite(sub["N"]) &
-                np.isfinite(sub["delta_aic_trunc_minus_exp"])
-            ]
-
-            tmp = (
-                sub.groupby("N")["delta_aic_trunc_minus_exp"]
-                .agg(["mean", "std", "count"])
-                .reset_index()
-                .sort_values("N")
-            )
-
-            ax.errorbar(
-                tmp["N"], tmp["mean"], yerr=tmp["std"],
-                fmt="o",
-                linestyle=ls,
-                color=color,
-                ecolor=color,
-                linewidth=1.0,
-                elinewidth=0.75,
-                capsize=2.0,
-                capthick=0.75,
-                markersize=3.0,
-                markeredgewidth=0.0,
-                label=label,
-            )
-
-        ax.axhline(0.0, color="0.25", linestyle="--", linewidth=0.75)
-
-        ax.set_xlabel(r"$N$")
-        ax.set_ylabel(r"$\Delta$AIC")
-        ax.xaxis.set_major_locator(MultipleLocator(100))
-        ax.xaxis.set_minor_locator(MultipleLocator(50))
-        ax.yaxis.set_minor_locator(AutoMinorLocator(2))
-
-        ax.grid(which="major", color="0.88", linewidth=0.35)
-        ax.grid(which="minor", color="0.94", linewidth=0.22)
-
-        ax.tick_params(which="major", length=3.0, width=0.75, pad=2)
-        ax.tick_params(which="minor", length=1.7, width=0.5)
-
-        ax.legend(frameon=False, fontsize=6, loc="best", handlelength=2.0)
-
-        for sp in ax.spines.values():
-            sp.set_visible(True)
-            sp.set_linewidth(0.75)
-            sp.set_color("0.15")
-
-        out_pdf = out_dir / f"paper_individual_delta_aic_summary_{folder}.pdf"
-        out_png = out_dir / f"paper_individual_delta_aic_summary_{folder}.png"
-        fig.savefig(out_pdf, bbox_inches="tight")
-        fig.savefig(out_png, dpi=600, bbox_inches="tight")
-        plt.close(fig)
-
-        print(f"saved: {out_pdf}")
-        print(f"saved: {out_png}")
-
-def plot_individual_delta_aic_violin_regimes(analysis_root: Path, out_dir: Path):
-    setup_style()
-
-    regime_labels = {
-        "kappa_0p5__okappa_1p5": "SMS",
-        "kappa_1p5__okappa_2": "MS",
-        "kappa_2p5__okappa_3": "Milling",
-    }
-
-    kind_labels = {
-        "schooling_tot": "schooling",
-        "milling_tan": "tangential",
-        "milling_rad": "radial",
-    }
-
-    kind_order = ["schooling_tot", "milling_tan", "milling_rad"]
-
-    kind_markers = {
-        "schooling_tot": "o",
-        "milling_tan": "^",
-        "milling_rad": "s",
-    }
-
-    regime_kind_colors = {
-        "kappa_0p5__okappa_1p5": {
-            "schooling_tot": "#243B53",
-            "milling_tan": "#4E79A7",
-            "milling_rad": "#A6C8E1",
-        },
-        "kappa_1p5__okappa_2": {
-            "schooling_tot": "#8C3F1F",
-            "milling_tan": "#C06C3E",
-            "milling_rad": "#E8B88A",
-        },
-        "kappa_2p5__okappa_3": {
-            "schooling_tot": "#2E5E3E",
-            "milling_tan": "#5B8A72",
-            "milling_rad": "#B7D7B0",
-        },
-    }
-
-    base_positions = np.arange(len(CONDITIONS), dtype=float)[::-1]
-
-    kind_offsets = {
-        "schooling_tot": 0.22,
-        "milling_tan": 0.00,
-        "milling_rad": -0.22,
-    }
-
-    fig, ax = plt.subplots(figsize=(3.45, 2.75), constrained_layout=True)
-    rng = np.random.default_rng(123)
-
-    all_vals = []
-
-    for r, (folder, _) in enumerate(CONDITIONS):
-        csv_path = analysis_root / folder / "levy_individual_metrics.csv"
-        df = pd.read_csv(csv_path)
-
-        base = base_positions[r]
-
-        for kind in kind_order:
-            vals = pd.to_numeric(
-                df.loc[df["kind"] == kind, "delta_aic_trunc_minus_exp"],
-                errors="coerce",
-            ).to_numpy(float)
-
-            vals = vals[np.isfinite(vals)]
-
-            if vals.size == 0:
-                continue
-
-            all_vals.extend(vals.tolist())
-
-            pos = base + kind_offsets[kind]
-            color = regime_kind_colors[folder][kind]
-
-            vp = ax.violinplot(
-                vals,
-                positions=[pos],
-                vert=False,
-                widths=0.26,
-                showmeans=False,
-                showmedians=False,
-                showextrema=False,
-            )
-
-            for body in vp["bodies"]:
-                body.set_facecolor(color)
-                body.set_edgecolor("none")
-                body.set_alpha(0.36)
-
-            n_show = min(vals.size, 180)
-            idx = rng.choice(vals.size, size=n_show, replace=False)
-            jitter = rng.normal(0.0, 0.020, size=n_show)
-
-            ax.scatter(
-                vals[idx],
-                np.full(n_show, pos) + jitter,
-                s=8.0,
-                marker=kind_markers[kind],
-                facecolor=color,
-                edgecolor="none",
-                alpha=0.75,
-                rasterized=True,
-            )
-
-            med = np.median(vals)
-
-            ax.plot(
-                [med, med],
-                [pos - 0.07, pos + 0.07],
-                color=color,
-                lw=1.35,
-                solid_capstyle="round",
-                zorder=4,
-            )
-
-    ax.axvline(
-        0.0,
-        color="0.30",
-        linestyle="--",
-        linewidth=0.75,
-        zorder=0,
-    )
-
-    if len(all_vals) > 0:
-        lo = np.min(all_vals)
-        hi = np.max(all_vals)
-
-        if np.isclose(lo, hi):
-            lo -= 1.0
-            hi += 1.0
-
-        pad = 0.08 * (hi - lo)
-        ax.set_xlim(lo - pad, hi + pad)
-
-        ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
-        ax.xaxis.set_minor_locator(AutoMinorLocator(2))
-
-    ax.text(
-        0.01,
-        0.98,
-        r"$\Delta$AIC = 0",
-        transform=ax.transAxes,
-        fontsize=6,
-        color="0.25",
-        ha="left",
-        va="top",
-    )
-
-    ax.set_yticks(base_positions)
-    ax.set_yticklabels([regime_labels[f] for f, _ in CONDITIONS])
-
-    ax.set_xlabel(r"$\Delta$AIC (truncated - shifted exp)")
-
-    ax.grid(which="major", axis="x", color="0.88", linewidth=0.35)
-    ax.grid(which="minor", axis="x", color="0.94", linewidth=0.22)
-
-    ax.tick_params(which="major", length=3.0, width=0.75, pad=2)
-    ax.tick_params(which="minor", length=1.7, width=0.5)
-    ax.tick_params(axis="x", labelsize=6)
-
     handles = []
     labels = []
 
@@ -959,8 +518,8 @@ def plot_individual_delta_aic_violin_regimes(analysis_root: Path, out_dir: Path)
         sp.set_linewidth(0.75)
         sp.set_color("0.15")
 
-    out_pdf = out_dir / "paper_individual_delta_aic_violin_regimes.pdf"
-    out_png = out_dir / "paper_individual_delta_aic_violin_regimes.png"
+    out_pdf = out_dir / "Figure_8C.pdf"
+    out_png = out_dir / "Figure_8C.png"
 
     fig.savefig(out_pdf, bbox_inches="tight")
     fig.savefig(out_png, dpi=600, bbox_inches="tight")
@@ -972,40 +531,26 @@ def plot_individual_delta_aic_violin_regimes(analysis_root: Path, out_dir: Path)
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--analysis-root", required=True)
-    ap.add_argument("--position-root", required=True)
-    ap.add_argument("--out", default=None)
-    ap.add_argument("--sample-N", type=int, default=300)
+    ap.add_argument(
+        "--data-root",
+        default="data/processed/figure8",
+        help="Directory containing Figure 8 processed data.",
+    )
+    ap.add_argument(
+        "--out",
+        default="figures/output",
+        help="Output directory for Figure 8 panels.",
+    )
 
     args = ap.parse_args()
 
-    analysis_root = Path(args.analysis_root).expanduser().resolve()
-    position_root = Path(args.position_root).expanduser().resolve()
+    data_root = Path(args.data_root).expanduser().resolve()
+    out_dir = Path(args.out).expanduser().resolve()
 
-    out_dir = Path(args.out).expanduser().resolve() if args.out else analysis_root / "paper_figures_individual"
     ensure_dir(out_dir)
 
-    plot_individual_alpha_by_condition(analysis_root, out_dir)
-    plot_individual_delta_aic_by_condition(analysis_root, out_dir)
-
-    plot_individual_alpha_violin_regimes(
-        analysis_root=analysis_root,
-        out_dir=out_dir,
-    )
-
-    plot_individual_delta_aic_violin_regimes(
-        analysis_root=analysis_root,
-        out_dir=out_dir,
-    )
-
-    plot_individual_fit_sample(
-        analysis_root=analysis_root,
-        position_root=position_root,
-        out_dir=out_dir,
-        folder="kappa_2p5__okappa_3",
-        N=args.sample_N,
-    )
-
+    plot_figure8B_sample_fit(data_root, out_dir)
+    plot_figure8C_alpha_violin(data_root, out_dir)
 
 
 if __name__ == "__main__":
