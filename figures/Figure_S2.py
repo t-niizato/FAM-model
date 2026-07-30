@@ -103,7 +103,7 @@ BURN_IN_FRACTION = 0.10
 
 # Downsampling used only for plotting.
 # Mean P and M are calculated from the full post-burn-in time series.
-PLOT_STEP = 10
+PLOT_STEP = 1
 
 
 def set_paper_style():
