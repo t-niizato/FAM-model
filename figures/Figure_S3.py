@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -56,6 +57,7 @@ CONDITIONS = [
             r"\kappa_{\mathrm{op}}=1.5$"
         ),
         "start_step": 5000,
+        "flip_rank": 0,
     },
     {
         "file": "PM_trajectory_N300_kper0p5_kop3.npz",
@@ -64,6 +66,16 @@ CONDITIONS = [
             r"\kappa_{\mathrm{op}}=3.0$"
         ),
         "start_step": 5000,
+        "flip_rank": 0,
+    },
+    {
+        "file": "PM_trajectory_N300_kper0p5_kop3.npz",
+        "label": (
+            r"$\kappa_{\mathrm{per}}=0.5,\ "
+            r"\kappa_{\mathrm{op}}=3.0$"
+        ),
+        "start_step": 5000,
+        "flip_rank": 24,
     },
     {
         "file": "PM_trajectory_N300_kper2p5_kop3.npz",
@@ -72,6 +84,7 @@ CONDITIONS = [
             r"\kappa_{\mathrm{op}}=3.0$"
         ),
         "start_step": 5000,
+        "flip_rank": 0,
     },
 ]
 
@@ -250,6 +263,7 @@ def select_strongest_flip_event(
     evaluation_window: int = 100,
     exclusion_window: int = 20,
     min_mean_abs: float = 0.20,
+    rank: int = 0,
 ):
     """
     Select the clearest large-scale reversal of omega.
@@ -388,12 +402,18 @@ def select_strongest_flip_event(
         reverse=True,
     )
 
-    best = candidates[0]
+    if rank < 0 or rank >= len(candidates):
+        raise RuntimeError(
+            f"Requested flip rank {rank}, but only "
+            f"{len(candidates)} strong flip candidates are available."
+        )
+
+    selected = candidates[rank]
 
     return (
         omega_s,
         flip_times,
-        int(best["flip_t"]),
+        int(selected["flip_t"]),
         candidates,
     )
 
@@ -479,42 +499,22 @@ def choose_x_major_step(n_steps: int) -> int:
     return 100_000
 
 
-def plot_supporting_figure(
+def plot_supporting_figures(
     results: list[dict],
-    out_pdf: Path,
-    out_png: Path,
+    out_dir: Path,
     panel_offsets=(-120, -60, -20, 0, 20, 60, 120),
     spatial_half_window: int = 120,
     trail_len: int = 40,
     point_size: float = 3.0,
 ) -> None:
-    n_conditions = len(results)
+    """
+    Save one supporting figure per parameter condition.
+
+    Each condition is assigned a panel letter (A, B, C, ...).
+    The parameter information is shown at the top of each figure,
+    followed by the full Omega time series and the snapshots.
+    """
     n_snapshots = len(panel_offsets)
-
-    # Each condition uses two rows:
-    #   upper row: full Omega time series
-    #   lower row: snapshots around the selected flip
-    fig = plt.figure(
-        figsize=(
-            1.18 * n_snapshots,
-            2.15 * n_conditions,
-        ),
-        constrained_layout=True,
-    )
-
-    height_ratios = []
-
-    for _ in range(n_conditions):
-        height_ratios.extend([0.72, 1.15])
-
-    gs = fig.add_gridspec(
-        2 * n_conditions,
-        n_snapshots,
-        height_ratios=height_ratios,
-        hspace=0.08,
-        wspace=0.05,
-    )
-
     panel_letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 
     for condition_index, result in enumerate(results):
@@ -523,6 +523,7 @@ def plot_supporting_figure(
         flip_t = result["flip_t"]
         label = result["label"]
 
+        panel_letter = panel_letters[condition_index]
         T = X.shape[0]
 
         times = [
@@ -536,15 +537,41 @@ def plot_supporting_figure(
             half_window=spatial_half_window,
         )
 
-        omega_row = 2 * condition_index
-        snapshot_row = omega_row + 1
+        # One condition per figure:
+        #   top: parameter label
+        #   middle: full Omega time series
+        #   bottom: snapshots around the selected flip
+        fig = plt.figure(
+            figsize=(10.0, 4.25),
+            constrained_layout=False,
+        )
+
+        gs = fig.add_gridspec(
+            2,
+            n_snapshots,
+            height_ratios=[0.82, 1.28],
+            left=0.065,
+            right=0.985,
+            bottom=0.10,
+            top=0.86,
+            hspace=0.28,
+            wspace=0.06,
+        )
+
+        # Parameter information at the very top.
+        fig.text(
+            0.065,
+            0.945,
+            rf"$\bf{{{panel_letter}}}$   {label}",
+            ha="left",
+            va="top",
+            fontsize=9,
+        )
 
         # ====================================================
         # Full Omega time series
         # ====================================================
-        ax_omega = fig.add_subplot(
-            gs[omega_row, :]
-        )
+        ax_omega = fig.add_subplot(gs[0, :])
 
         time_axis = np.arange(len(omega))
 
@@ -588,11 +615,11 @@ def plot_supporting_figure(
 
         ax_omega.set_ylabel(
             r"$\Omega$",
-            fontsize=6,
+            fontsize=7,
         )
         ax_omega.set_xlabel(
             "Simulation step",
-            fontsize=6,
+            fontsize=7,
             labelpad=1,
         )
 
@@ -615,7 +642,7 @@ def plot_supporting_figure(
         )
 
         ax_omega.tick_params(
-            labelsize=5,
+            labelsize=6,
             width=0.45,
             length=2,
         )
@@ -627,32 +654,22 @@ def plot_supporting_figure(
         )
 
         ax_omega.text(
-            0.008,
-            0.94,
-            f"{panel_letters[condition_index]}  {label}",
-            transform=ax_omega.transAxes,
-            ha="left",
-            va="top",
-            fontsize=6,
-        )
-
-        ax_omega.text(
-            0.992,
-            0.06,
+            1.0,
+            1.04,
             rf"$t_{{\mathrm{{flip}}}}={flip_t}$",
             transform=ax_omega.transAxes,
             ha="right",
             va="bottom",
-            fontsize=4.8,
+            fontsize=5.5,
+            clip_on=False,
         )
 
-        if condition_index == 0:
-            ax_omega.legend(
-                frameon=False,
-                fontsize=4.8,
-                loc="lower right",
-                handlelength=1.6,
-            )
+        ax_omega.legend(
+            frameon=False,
+            fontsize=5.5,
+            loc="lower right",
+            handlelength=1.6,
+        )
 
         for spine in ax_omega.spines.values():
             spine.set_visible(True)
@@ -665,9 +682,7 @@ def plot_supporting_figure(
         for col, (tt, offset) in enumerate(
             zip(times, panel_offsets)
         ):
-            ax = fig.add_subplot(
-                gs[snapshot_row, col]
-            )
+            ax = fig.add_subplot(gs[1, col])
 
             add_trails(
                 ax,
@@ -709,8 +724,8 @@ def plot_supporting_figure(
 
             ax.set_title(
                 title,
-                fontsize=4.8,
-                pad=1.2,
+                fontsize=5.5,
+                pad=1.5,
             )
 
             for spine in ax.spines.values():
@@ -720,19 +735,24 @@ def plot_supporting_figure(
                 )
                 spine.set_color("black")
 
-    fig.savefig(
-        out_pdf,
-        bbox_inches="tight",
-    )
+        out_pdf = out_dir / f"Figure_S3{panel_letter}.pdf"
+        out_png = out_dir / f"Figure_S3{panel_letter}.png"
 
-    fig.savefig(
-        out_png,
-        dpi=600,
-        bbox_inches="tight",
-    )
+        fig.savefig(
+            out_pdf,
+            bbox_inches="tight",
+        )
 
-    plt.close(fig)
+        fig.savefig(
+            out_png,
+            dpi=600,
+            bbox_inches="tight",
+        )
 
+        plt.close(fig)
+
+        print(f"Saved: {out_pdf}")
+        print(f"Saved: {out_png}")
 
 def main() -> None:
     set_paper_style()
@@ -764,20 +784,22 @@ def main() -> None:
                 evaluation_window=100,
                 exclusion_window=20,
                 min_mean_abs=0.20,
+                rank=condition.get("flip_rank", 0),
             )
         )
 
-        best = candidates[0]
+        selected = candidates[condition.get("flip_rank", 0)]
 
         print(
             f"{condition['file']}: "
             f"{len(all_flips)} flips detected, "
             f"selected flip_t={flip_t}, "
-            f"mean_before={best['mean_before']:.3f}, "
-            f"mean_after={best['mean_after']:.3f}, "
-            f"amplitude={best['amplitude']:.3f}, "
-            f"consistency={best['consistency']:.3f}, "
-            f"score={best['score']:.3f}"
+            f"rank={condition.get('flip_rank', 0)}, "
+            f"mean_before={selected['mean_before']:.3f}, "
+            f"mean_after={selected['mean_after']:.3f}, "
+            f"amplitude={selected['amplitude']:.3f}, "
+            f"consistency={selected['consistency']:.3f}, "
+            f"score={selected['score']:.3f}"
         )
 
         results.append(
@@ -791,28 +813,14 @@ def main() -> None:
             }
         )
 
-    out_pdf = (
-        OUT_DIR
-        / "Figure_S3.pdf"
-    )
-
-    out_png = (
-        OUT_DIR
-        / "Figure_S3.png"
-    )
-
-    plot_supporting_figure(
+    plot_supporting_figures(
         results=results,
-        out_pdf=out_pdf,
-        out_png=out_png,
+        out_dir=OUT_DIR,
         panel_offsets=(-120, -60, -20, 0, 20, 60, 120),
         spatial_half_window=120,
         trail_len=40,
         point_size=3.0,
     )
-
-    print(f"Saved: {out_pdf}")
-    print(f"Saved: {out_png}")
 
 
 if __name__ == "__main__":

@@ -55,6 +55,11 @@ CONDITIONS = [
         r"$\kappa_{\rm per}=2.5,\ \kappa_{\rm op}=3.0$",
         "#5B8A72",
     ),
+    (
+        "kappa_2p5__okappa_1p8_com_all_runs_metrics.csv",
+        r"$\kappa_{\mathrm{per}}=1.8,\ \kappa_{\mathrm{op}}=2.5$",
+        "#7A5195",
+    ),
 ]
 
 
@@ -118,7 +123,7 @@ def main():
 
     fig, axes = plt.subplots(
         1,
-        3,
+        4,
         figsize=(6.8, 2.25),
         sharex=True,
         sharey=False,

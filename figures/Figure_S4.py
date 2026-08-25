@@ -55,6 +55,11 @@ CONDITIONS = [
         r"$\kappa_{\mathrm{per}}=2.5,\ \kappa_{\mathrm{op}}=3.0$",
         "#2E8B57",
     ),
+    (
+        "kappa_1p8__okappa_2p5_criticality_summary.csv",
+        r"$\kappa_{\mathrm{per}}=1.8,\ \kappa_{\mathrm{op}}=2.5$",
+        "#7A5195",
+    ),
 ]
 
 
@@ -132,7 +137,7 @@ def summarize_alpha_hi(
 def plot_figure(out_pdf: Path, out_png: Path):
     fig, axes = plt.subplots(
         1,
-        3,
+        4,
         figsize=(6.8, 2.25),
         sharex=True,
         sharey=False,
