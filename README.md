@@ -98,12 +98,13 @@ Representative datasets required to reproduce the main figures are included in t
 Large-scale simulation datasets used for parameter sweeps are not included.
 
 ---
+# Citation
 
-## Citation
+If you use this code in your research, please cite the corresponding preprint:
 
-If you use this code in your research, please cite the corresponding publication.
+[Niizato, T. “Emergence of collective criticality from future-anticipation maximisation.” Research Square (2026).](https://www.researchsquare.com/article/rs-10846658/v1)
 
-*Citation information will be added after publication.*
+Citation information will be updated when the peer-reviewed article is published.
 
 ---
 
